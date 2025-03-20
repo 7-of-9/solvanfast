@@ -1,14 +1,18 @@
-import { Keypair } from '@solana/web3.js';
-import pkg from 'bs58';
+import sodium from 'sodium-native';
+import bs58 from 'bs58';
 import readline from 'readline';
 import chalk from 'chalk';
 import fs from 'fs';
-const { encode } = pkg;
+import { Worker, isMainThread, parentPort, workerData } from 'worker_threads';
+import os from 'node:os';
+
+// Constants
 const base58Charset = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz';
 const base58AlphabetSize = 58;
+const logInterval = 100000; // Log every 10,000 keys for continuous updates
+const batchSize = 1000; // Number of keypairs to generate per batch
 
-const logTime = 100000;
-
+// Color definitions
 const sol_teal = chalk.rgb(26, 248, 157);
 const sol_lightBlue = chalk.rgb(53, 204, 193);
 const sol_blue = chalk.rgb(79, 160, 210);
@@ -16,148 +20,179 @@ const sol_darkBlue = chalk.rgb(109, 116, 228);
 const sol_lightPurple = chalk.rgb(136, 81, 243);
 const sol_purple = chalk.rgb(152, 70, 255);
 
-console.log(sol_teal('\n||||||||||||||||||||||||||'));
-console.log(sol_teal('||    SOLANA VANITY     ||'));
-console.log(sol_lightBlue('||   WALLET GENERATOR   ||'));
-console.log(sol_lightBlue('||||||||||||||||||||||||||'));
-console.log(sol_blue('||      HOW TO USE      ||'));
-console.log(sol_darkBlue('|| 1. INPUT PREFIX      ||'));
-console.log(sol_lightPurple('|| 2. CONFIRM ESTIMATE  ||'))
-console.log(sol_lightPurple('|| 3. WAIT              ||'));
-console.log(sol_purple('||||||||||||||||||||||||||\n'));
+// Pre-allocate buffers for keypair generation
+const publicKeyBuffer = Buffer.alloc(sodium.crypto_sign_PUBLICKEYBYTES); // 32 bytes
+const secretKeyBuffer = Buffer.alloc(sodium.crypto_sign_SECRETKEYBYTES); // 64 bytes
 
-const rl = readline.createInterface({
-    input: process.stdin,
-    output: process.stdout
-});
+// Main thread logic
+if (isMainThread) {
+    const numCPUs = os.cpus().length;
+    const workerStatus = new Array(numCPUs).fill({ count: 0, aps: 0, lastAddress: '', matches: 0 });
 
-rl.question(chalk.yellow('Enter your desired prefix: '), async (desiredPrefix) => {
-    if (!isBase58(desiredPrefix)) {
-        console.log(chalk.red(`Invalid prefix detected. Ensure your address excludes the characters '0', 'O', 'I', and 'l', as they are not allowed in a base58 format.`));
-        rl.close();
-        return;
-    }
+    console.log(sol_teal('\n||||||||||||||||||||||||||'));
+    console.log(sol_teal('|| SOLANA VANITY ||'));
+    console.log(sol_lightBlue('|| WALLET GENERATOR ||'));
+    console.log(sol_lightBlue('||||||||||||||||||||||||||'));
+    console.log(sol_blue('|| HOW TO USE ||'));
+    console.log(sol_darkBlue('|| 1. INPUT SUFFIX ||'));
+    console.log(sol_lightPurple('|| 2. CONFIRM ESTIMATE ||'));
+    console.log(sol_lightPurple('|| 3. WAIT ||'));
+    console.log(sol_purple('||||||||||||||||||||||||||\n'));
 
-    const prefixLength = desiredPrefix.length;
-    const totalCombinations = Math.pow(base58AlphabetSize, prefixLength);
-
-    function measureKeysPerSecond() {
-        let keypair;
-        let publicKeyString;
-        let count = 0;
-        const startTime = Date.now();
-        const endTime = startTime + 1000;
-
-        while (Date.now() < endTime) {
-            keypair = Keypair.generate();
-            publicKeyString = keypair.publicKey.toString();
-            count++;
-        }
-
-        const elapsedTime = (Date.now() - startTime) / 1000;
-        return count / elapsedTime;
-    }
-
-    const keysPerSecond = measureKeysPerSecond();
-    const initialEstimatedTime = calculateRemainingTime(totalCombinations, 0, keysPerSecond);
-    console.log(chalk.rgb(82, 155, 212)(`Desired prefix: `) + chalk.white(`${desiredPrefix}`));
-    console.log(chalk.rgb(82, 155, 212)(`This device will generate `) + chalk.green(`~${keysPerSecond.toFixed(2)}`) + chalk.rgb(82, 155, 212)(` Addresses Per Second (APS)`));
-    if (initialEstimatedTime.totalDays >= 1) {
-        console.log(chalk.rgb(82, 155, 212)(`Estimated time until 50% probability: `) + chalk.red(`${initialEstimatedTime.totalDays.toLocaleString()} days, ${initialEstimatedTime.totalHours} hours, ${initialEstimatedTime.totalMinutes} minutes, and ${initialEstimatedTime.totalSeconds} seconds`));
-    } else if (initialEstimatedTime.totalDays < 1 && initialEstimatedTime.totalHours > 1) {
-        console.log(chalk.rgb(82, 155, 212)(`Estimated time until 50% probability: `) + chalk.yellow(`${initialEstimatedTime.totalDays.toLocaleString()} days, ${initialEstimatedTime.totalHours} hours, ${initialEstimatedTime.totalMinutes} minutes, and ${initialEstimatedTime.totalSeconds} seconds`));
-    } else {
-        console.log(chalk.rgb(82, 155, 212)(`Estimated time until 50% probability: `) + chalk.green(`${initialEstimatedTime.totalDays.toLocaleString()} days, ${initialEstimatedTime.totalHours} hours, ${initialEstimatedTime.totalMinutes} minutes, and ${initialEstimatedTime.totalSeconds} seconds`));
-    }
-    console.log(chalk.rgb(82, 155, 212)(`Logs will be sent every `) + chalk.green(`${logTime.toLocaleString()}`) + chalk.rgb(82, 155, 212)(` addresses generated`));
-    rl.question(chalk.yellow('Do you want to proceed? (y/n): '), async (answer) => {
-        if (answer.toLowerCase() === 'y') {
-            console.log(chalk.rgb(26, 248, 157)('L') + chalk.rgb(53, 204, 193)('F') + chalk.rgb(79, 160, 210)('G') + chalk.rgb(109, 116, 228)('G') + chalk.rgb(136, 81, 243)('G') + chalk.rgb(152, 70, 255)('G'));
-            try {
-                const vanityKeypair = await generateVanityAddress(desiredPrefix);
-                const publicKey = vanityKeypair.publicKey.toString();
-                const secretKey = encode(vanityKeypair.secretKey);
-
-                console.log(chalk.blue.green('Generated Address:'), chalk.blue(publicKey));
-                console.log(chalk.blue.green('Secret Key:'), chalk.blue(secretKey));
-
-                saveKeysToFile(publicKey, secretKey);
-            } catch (e) {
-                console.log(chalk.red('Error generating vanity address:', e.message));
-            }
-        } else {
-            console.log(chalk.red('Cancelled.'));
-        }
-        rl.close();
+    const rl = readline.createInterface({
+        input: process.stdin,
+        output: process.stdout
     });
-});
 
-function isBase58(prefix) {
-    return prefix.split('').every((char) => base58Charset.includes(char));
+    rl.question(chalk.yellow('Enter your desired suffix: '), async (desiredSuffix) => {
+        if (!isBase58(desiredSuffix)) {
+            console.log(chalk.red(`Invalid suffix detected. Ensure your address excludes the characters '0', 'O', 'I', and 'l'.`));
+            rl.close();
+            return;
+        }
+
+        const suffixLength = desiredSuffix.length;
+        const totalCombinations = Math.pow(base58AlphabetSize, suffixLength);
+        const singleThreadKeysPerSecond = measureKeysPerSecond();
+        const effectiveKeysPerSecond = singleThreadKeysPerSecond * numCPUs;
+        const initialEstimatedTime = calculateRemainingTime(totalCombinations, 0, effectiveKeysPerSecond);
+
+        console.log(chalk.rgb(82, 155, 212)(`Desired suffix: `) + chalk.white(`${desiredSuffix}`));
+        console.log(chalk.rgb(82, 155, 212)(`Single-thread APS: `) + chalk.green(`~${singleThreadKeysPerSecond.toFixed(2)}`));
+        console.log(chalk.rgb(82, 155, 212)(`Effective APS with ${numCPUs} threads: `) + chalk.green(`~${effectiveKeysPerSecond.toFixed(2)}`));
+        console.log(chalk.rgb(82, 155, 212)(`Estimated time (50% probability): `) +
+            (initialEstimatedTime.totalDays >= 1 ? chalk.red : initialEstimatedTime.totalHours > 1 ? chalk.yellow : chalk.green)
+                (`${initialEstimatedTime.totalDays} days, ${initialEstimatedTime.totalHours} hrs, ${initialEstimatedTime.totalMinutes} mins, ${initialEstimatedTime.totalSeconds} secs`));
+
+        rl.question(chalk.yellow('Proceed? (y/n): '), (answer) => {
+            if (answer.toLowerCase() !== 'y') {
+                console.log(chalk.red('Cancelled.'));
+                rl.close();
+                return;
+            }
+
+            console.log(chalk.rgb(26, 248, 157)('L') + chalk.rgb(53, 204, 193)('F') + chalk.rgb(79, 160, 210)('G') + chalk.rgb(109, 116, 228)('G') + chalk.rgb(136, 81, 243)('G') + chalk.rgb(152, 70, 255)('G'));
+            startWorkers(desiredSuffix);
+            rl.close();
+        });
+    });
+
+    function startWorkers(desiredSuffix) {
+        const workers = [];
+        console.log(chalk.cyan(`Starting ${numCPUs} workers...`));
+
+        for (let i = 0; i < numCPUs; i++) {
+            workers.push(new Worker(new URL(import.meta.url), { workerData: { desiredSuffix } }));
+        }
+
+        workers.forEach((worker, index) => {
+            worker.on('message', (msg) => {
+                if (msg.found) {
+                    workerStatus[index].matches += 1;
+                    updateStatusDisplay(workerStatus);
+                    console.log(chalk.green(`\nWorker ${index} found a match!`));
+                    console.log(chalk.blue.green('Generated Address:'), chalk.blue(msg.publicKey));
+                    console.log(chalk.blue.green('Secret Key:'), chalk.blue(msg.secretKey));
+                    saveKeysToFile(msg.publicKey, msg.secretKey);
+                } else if (msg.status) {
+                    workerStatus[index] = {
+                        count: msg.count,
+                        aps: msg.aps.toFixed(2),
+                        lastAddress: msg.lastAddress,
+                        matches: workerStatus[index].matches
+                    };
+                    updateStatusDisplay(workerStatus);
+                }
+            });
+
+            worker.on('error', (err) => console.error(chalk.red(`Worker ${index} error: ${err.message}`)));
+            worker.on('exit', (code) => code !== 0 && console.log(chalk.red(`Worker ${index} exited with code ${code}`)));
+        });
+    }
+
+    function updateStatusDisplay(statusArray) {
+        console.clear();
+        console.log(chalk.cyan('Worker Status:'));
+        statusArray.forEach((status, i) => {
+            console.log(
+                chalk.yellow(`Worker ${i}: `) +
+                chalk.green(`${status.count} keys, ${status.aps} APS`) +
+                chalk.magenta(` | Matches: ${status.matches}`) +
+                chalk.gray(` | Last Address: ${status.lastAddress.slice(0, 10)}...${status.lastAddress.slice(-10)}`)
+            );
+        });
+    }
+
+} else {
+    // Worker thread logic
+    const desiredSuffix = workerData.desiredSuffix;
+
+    let count = 0;
+    const startTime = Date.now();
+
+    while (true) {
+        // Generate a batch of keypairs
+        for (let i = 0; i < batchSize; i++) {
+            sodium.crypto_sign_keypair(publicKeyBuffer, secretKeyBuffer);
+            const publicKeyString = bs58.encode(publicKeyBuffer);
+            count++;
+
+            if (publicKeyString.endsWith(desiredSuffix)) {
+                const secretKeyString = bs58.encode(secretKeyBuffer);
+                parentPort.postMessage({
+                    found: true,
+                    publicKey: publicKeyString,
+                    secretKey: secretKeyString
+                });
+            }
+        }
+
+        if (count % logInterval === 0) {
+            const elapsedTime = (Date.now() - startTime) / 1000;
+            const aps = count / elapsedTime;
+            parentPort.postMessage({
+                status: true,
+                count,
+                aps,
+                lastAddress: bs58.encode(publicKeyBuffer)
+            });
+        }
+    }
+}
+
+// Utility functions
+function isBase58(suffix) {
+    return suffix.split('').every((char) => base58Charset.includes(char));
+}
+
+function measureKeysPerSecond() {
+    let count = 0;
+    const startTime = Date.now();
+    const endTime = startTime + 1000;
+    while (Date.now() < endTime) {
+        sodium.crypto_sign_keypair(publicKeyBuffer, secretKeyBuffer);
+        count++;
+    }
+    return count / ((Date.now() - startTime) / 1000);
 }
 
 function calculateRemainingTime(totalCombinations, checkedCount, keysPerSecond) {
-    let remainingCombinations = (totalCombinations / 2) - checkedCount;
-    if (remainingCombinations < 0) remainingCombinations = 0;
-
+    const remainingCombinations = Math.max((totalCombinations / 2) - checkedCount, 0);
     const totalTimeInSeconds = remainingCombinations / keysPerSecond;
-    const secondsInADay = 86400;
-    const secondsInAnHour = 3600;
-    const secondsInAMinute = 60;
-
-    const totalDays = Math.floor(totalTimeInSeconds / secondsInADay);
-    const remainingSecondsDay = totalTimeInSeconds % secondsInADay;
-    const totalHours = Math.floor(remainingSecondsDay / secondsInAnHour);
-    const remainingSecondsHour = remainingSecondsDay % secondsInAnHour;
-    const totalMinutes = Math.floor(remainingSecondsHour / secondsInAMinute);
-    const totalSeconds = Math.floor(remainingSecondsHour % secondsInAMinute);
-
-    return {
-        totalDays,
-        totalHours,
-        totalMinutes,
-        totalSeconds,
-        actualProbability: (checkedCount / totalCombinations * 100).toFixed(2)
-    };
+    const totalDays = Math.floor(totalTimeInSeconds / 86400);
+    const remainingSecondsDay = totalTimeInSeconds % 86400;
+    const totalHours = Math.floor(remainingSecondsDay / 3600);
+    const remainingSecondsHour = remainingSecondsDay % 3600;
+    const totalMinutes = Math.floor(remainingSecondsHour / 60);
+    const totalSeconds = Math.floor(remainingSecondsHour % 60);
+    return { totalDays, totalHours, totalMinutes, totalSeconds };
 }
 
 function saveKeysToFile(publicKey, secretKey) {
     const filePath = 'solana_vanity_keys.json';
-    const keyData = {
-        publicKey,
-        secretKey
-    };
-
-    fs.appendFile(filePath, JSON.stringify(keyData, null, 2), 'utf8', (err) => {
-        if (err) {
-            console.log(chalk.red(`Error saving keys to file: ${err.message}`));
-        } else {
-            console.log(chalk.green(`Keys saved to ${chalk.blue(filePath)}`));
-        }
+    const keyData = { publicKey, secretKey };
+    fs.appendFile(filePath, JSON.stringify(keyData, null, 2) + '\n', 'utf8', (err) => {
+        if (err) console.log(chalk.red(`Error saving keys: ${err.message}`));
+        else console.log(chalk.green(`Keys saved to ${chalk.blue(filePath)}`));
     });
-}
-
-async function generateVanityAddress(desiredPrefix) {
-    let keypair;
-    let publicKeyString;
-    let count = 0;
-    const startTime = Date.now();
-    do {
-        keypair = Keypair.generate();
-        publicKeyString = keypair.publicKey.toString();
-        count++;
-        if (count % logTime === 0) {
-            const elapsedTime = (Date.now() - startTime) / 1000;
-            const currentKeysPerSecond = count / elapsedTime;
-            const estimatedRemainingTime = calculateRemainingTime(Math.pow(base58AlphabetSize, desiredPrefix.length), count, currentKeysPerSecond);
-            if (estimatedRemainingTime.totalDays <= 0 && estimatedRemainingTime.totalHours <= 0 && estimatedRemainingTime.totalMinutes <= 0 && estimatedRemainingTime.totalSeconds <= 0) {
-                console.log(chalk.cyan.bold('50% probability reached! Actual probability: ') + chalk.cyan(estimatedRemainingTime.actualProbability + '%'));
-            } else {
-                console.log(chalk.rgb(153, 69, 255)(`Time until 50% probability of success: ${estimatedRemainingTime.totalDays} days, ${estimatedRemainingTime.totalHours} hours, ${estimatedRemainingTime.totalMinutes} minutes, and ${estimatedRemainingTime.totalSeconds} seconds`));
-            }
-            console.log(chalk.yellow(`Count: ${count}`));
-            console.log(chalk.yellow(`APS: ${currentKeysPerSecond.toFixed(2)}`));
-        }
-    } while (!publicKeyString.startsWith(desiredPrefix));
-    return keypair;
 }

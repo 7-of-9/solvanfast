@@ -1,2 +1,5 @@
 node_modules
 package-lock
+
+solana_vanity_keys.json
+.env

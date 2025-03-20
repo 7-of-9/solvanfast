@@ -9,13 +9,13 @@ import os from 'node:os';
 // Constants
 const base58Charset = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz';
 const base58AlphabetSize = 58;
-const logInterval = 100000; // Log every 10,000 keys for continuous updates
+const logInterval = 10000; // Log every 10,000 keys for continuous updates
 const batchSize = 1000; // Number of keypairs to generate per batch
 
 // Color definitions
 const sol_teal = chalk.rgb(26, 248, 157);
 const sol_lightBlue = chalk.rgb(53, 204, 193);
-const sol_blue = chalk.rgb(79, 160, 210);
+const sol_blue = chalk.rgb(79, 160, 210);git 
 const sol_darkBlue = chalk.rgb(109, 116, 228);
 const sol_lightPurple = chalk.rgb(136, 81, 243);
 const sol_purple = chalk.rgb(152, 70, 255);

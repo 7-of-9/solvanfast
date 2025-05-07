@@ -15,7 +15,7 @@ const batchSize = 1000; // Number of keypairs to generate per batch
 // Color definitions
 const sol_teal = chalk.rgb(26, 248, 157);
 const sol_lightBlue = chalk.rgb(53, 204, 193);
-const sol_blue = chalk.rgb(79, 160, 210);git 
+const sol_blue = chalk.rgb(79, 160, 210);
 const sol_darkBlue = chalk.rgb(109, 116, 228);
 const sol_lightPurple = chalk.rgb(136, 81, 243);
 const sol_purple = chalk.rgb(152, 70, 255);
@@ -26,7 +26,7 @@ const secretKeyBuffer = Buffer.alloc(sodium.crypto_sign_SECRETKEYBYTES); // 64 b
 
 // Main thread logic
 if (isMainThread) {
-    const numCPUs = os.cpus().length;
+    const numCPUs = os.cpus().length - 1;
     const workerStatus = new Array(numCPUs).fill({ count: 0, aps: 0, lastAddress: '', matches: 0 });
 
     console.log(sol_teal('\n||||||||||||||||||||||||||'));
@@ -133,29 +133,39 @@ if (isMainThread) {
     while (true) {
         // Generate a batch of keypairs
         for (let i = 0; i < batchSize; i++) {
-            sodium.crypto_sign_keypair(publicKeyBuffer, secretKeyBuffer);
-            const publicKeyString = bs58.encode(publicKeyBuffer);
-            count++;
+            try {
+                sodium.crypto_sign_keypair(publicKeyBuffer, secretKeyBuffer);
+                const publicKeyString = bs58.encode(publicKeyBuffer);
+                count++;
 
-            if (publicKeyString.endsWith(desiredSuffix)) {
-                const secretKeyString = bs58.encode(secretKeyBuffer);
-                parentPort.postMessage({
-                    found: true,
-                    publicKey: publicKeyString,
-                    secretKey: secretKeyString
-                });
+                if (publicKeyString.endsWith(desiredSuffix)) {
+                    const secretKeyString = bs58.encode(secretKeyBuffer);
+                    parentPort.postMessage({
+                        found: true,
+                        publicKey: publicKeyString,
+                        secretKey: secretKeyString
+                    });
+                }
+            }
+            catch(err) {
+                console.log(err);
             }
         }
 
         if (count % logInterval === 0) {
-            const elapsedTime = (Date.now() - startTime) / 1000;
-            const aps = count / elapsedTime;
-            parentPort.postMessage({
-                status: true,
-                count,
-                aps,
-                lastAddress: bs58.encode(publicKeyBuffer)
-            });
+            try {
+                const elapsedTime = (Date.now() - startTime) / 1000;
+                const aps = count / elapsedTime;
+                parentPort.postMessage({
+                    status: true,
+                    count,
+                    aps,
+                    lastAddress: bs58.encode(publicKeyBuffer)
+                });
+            }
+            catch(err) {
+                console.log(err);
+            }        
         }
     }
 }

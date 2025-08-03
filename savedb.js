@@ -71,33 +71,20 @@ async function processKeyPair(filePath) {
       });
       pool = await sql.connect(dbConfig);
       console.log('Connected to database successfully');
-  
-      // Create table if it doesn't exist
-    //   console.log('Creating table if it does not exist...');
-    //   await pool.request().query(`
-    //     IF NOT EXISTS (SELECT * FROM sys.tables WHERE name = 'KeyPair')
-    //     BEGIN
-    //       CREATE TABLE KeyPair (
-    //         PublicKey VARCHAR(255) NOT NULL,
-    //         SecretKey VARCHAR(255) NOT NULL,
-    //         IsUsed BIT NOT NULL DEFAULT 0,
-    //         PRIMARY KEY (PublicKey)
-    //       )
-    //       CREATE NONCLUSTERED INDEX IX_KeyPair_IsUsed 
-    //       ON KeyPair (IsUsed)
-    //     END
-    //   `);
-    //   console.log('Table creation check completed');
-  
+
       // Process each key pair
       for (const obj of objects) {
         console.log(`Processing key: ${obj.publicKey}`);
         const exists = await pool.request()
           .input('publicKey', sql.VarChar, obj.publicKey)
           .query(`
-            SELECT COUNT(*) as count 
-            FROM KeyPair 
-            WHERE PublicKey = @publicKey
+            SELECT 
+              (SELECT COUNT(*) FROM KeyPair WHERE PublicKey = @publicKey) +
+              CASE 
+                WHEN DB_NAME() LIKE '%prod%' OR @@SERVERNAME LIKE '%prod%'
+                THEN (SELECT COUNT(*) FROM dev_pubkey WHERE PublicKey = @publicKey)
+                ELSE 0
+              END as count
           `);
   
         if (exists.recordset[0].count === 0) {

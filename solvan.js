@@ -26,7 +26,7 @@ const secretKeyBuffer = Buffer.alloc(sodium.crypto_sign_SECRETKEYBYTES); // 64 b
 
 // Main thread logic
 if (isMainThread) {
-    const numCPUs = os.cpus().length - 1;
+    const numCPUs = os.cpus().length - 4;
     const workerStatus = new Array(numCPUs).fill({ count: 0, aps: 0, lastAddress: '', matches: 0 });
 
     console.log(sol_teal('\n||||||||||||||||||||||||||'));
@@ -148,7 +148,7 @@ if (isMainThread) {
                 }
             }
             catch(err) {
-                console.log(err);
+                throw err;
             }
         }
 
@@ -164,7 +164,7 @@ if (isMainThread) {
                 });
             }
             catch(err) {
-                console.log(err);
+                throw err;
             }        
         }
     }
